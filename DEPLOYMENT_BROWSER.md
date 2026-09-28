@@ -1,4 +1,4 @@
-# Current deployment: Vercel only
+﻿# Current deployment: Vercel only
 
 The public frontend runs the existing model on the visitor's device using ONNX
 Runtime Web. Vercel serves static files. No Python server, Hugging Face Space,
@@ -26,7 +26,7 @@ Open the URL printed by Vite. Python is not required for the web app.
 
 ```powershell
 npm run build
-npx vercel --prod --yes --cwd frontend --scope acme-88b4
+npx vercel --prod --cwd frontend
 ```
 
 Project: agrivision-ai. Framework: Vite. Root: frontend. Build: npm run build.
@@ -66,3 +66,4 @@ DEPLOYMENT.md describes the earlier, superseded backend-based architecture.
 
 Sources: [ONNX Runtime Web](https://onnxruntime.ai/docs/tutorials/web/),
 [Hugging Face compute requirements](https://huggingface.co/docs/hub/spaces-overview).
+
