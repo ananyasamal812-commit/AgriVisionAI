@@ -1,0 +1,278 @@
+"""Your semantic search app."""
+
+import os
+
+import psycopg
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse
+from pgvector.psycopg import register_vector
+from pydantic import BaseModel
+from sentence_transformers import SentenceTransformer
+
+
+app = FastAPI(title="Semantic Search — ananya")
+
+
+MODEL_NAME = "all-MiniLM-L6-v2"
+model = SentenceTransformer(MODEL_NAME)
+
+
+def get_conn() -> psycopg.Connection:
+    """Connect to PostgreSQL and register pgvector support."""
+    conn = psycopg.connect(
+        host=os.environ.get("PGHOST", "localhost"),
+        port=int(os.environ.get("PGPORT", "5432")),
+        dbname=os.environ.get(
+            "PGDATABASE",
+            "semantic_search_ananya",
+        ),
+        user=os.environ.get("PGUSER", "postgres"),
+        password=os.environ.get("PGPASSWORD", ""),
+        autocommit=True,
+    )
+
+    register_vector(conn)
+    return conn
+
+
+def embed_query(text: str) -> list[float]:
+    """Embed one query using the same model as the corpus."""
+    vector = model.encode(
+        [text],
+        normalize_embeddings=True,
+    )[0]
+
+    return vector.tolist()
+
+
+def search_vector(
+    conn: psycopg.Connection,
+    query: str,
+    k: int,
+) -> list[dict]:
+    """Return the k nearest transcript segments with metadata."""
+    query_vector = embed_query(query)
+
+    rows = conn.execute(
+        """
+        SELECT
+            id,
+            video,
+            start_s,
+            end_s,
+            speaker,
+            text,
+            1 - (embedding <=> %s) AS score
+        FROM segments
+        WHERE embedding IS NOT NULL
+        ORDER BY embedding <=> %s
+        LIMIT %s
+        """,
+        (
+            query_vector,
+            query_vector,
+            k,
+        ),
+    ).fetchall()
+
+    return [
+        {
+            "id": row[0],
+            "video": row[1],
+            "start_s": round(float(row[2]), 2),
+            "end_s": round(float(row[3]), 2),
+            "speaker": row[4],
+            "text": row[5],
+            "score": (
+                round(float(row[6]), 4)
+                if row[6] is not None
+                else None
+            ),
+        }
+        for row in rows
+    ]
+
+
+class SearchReq(BaseModel):
+    query: str
+    k: int = 5
+
+
+@app.get("/healthz")
+def healthz():
+    return {"ok": True}
+
+
+@app.post("/api/search")
+def api_search(req: SearchReq):
+    conn = get_conn()
+
+    try:
+        hits = search_vector(
+            conn,
+            req.query,
+            req.k,
+        )
+    except Exception as error:
+        raise HTTPException(
+            status_code=500,
+            detail=str(error),
+        )
+    finally:
+        conn.close()
+
+    return {
+        "query": req.query,
+        "hits": hits,
+    }
+
+
+@app.get("/", response_class=HTMLResponse)
+def index():
+    return """
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Semantic Search</title>
+
+    <style>
+        body {
+            font: 15px system-ui;
+            max-width: 760px;
+            margin: 40px auto;
+            padding: 0 16px;
+            background: #fafafa;
+        }
+
+        input {
+            width: 78%;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+        }
+
+        button {
+            padding: 10px 16px;
+            border: 0;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+
+        .result {
+            border: 1px solid #e5e5e5;
+            border-radius: 8px;
+            padding: 12px;
+            margin: 10px 0;
+            background: white;
+        }
+
+        .meta {
+            color: #666;
+            font-size: 13px;
+            margin-bottom: 8px;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>Search the training recordings</h1>
+
+    <form id="f">
+        <input
+            id="q"
+            placeholder="Ask something"
+            required
+        >
+        <button type="submit">Search</button>
+    </form>
+
+    <div id="o"></div>
+
+    <script>
+        const form = document.getElementById("f");
+        const queryInput = document.getElementById("q");
+        const output = document.getElementById("o");
+
+        form.onsubmit = async (event) => {
+            event.preventDefault();
+
+            output.innerHTML = "<p>Searching...</p>";
+
+            try {
+                const response = await fetch("/api/search", {
+                    method: "POST",
+                    headers: {
+                        "content-type": "application/json"
+                    },
+                    body: JSON.stringify({
+                        query: queryInput.value,
+                        k: 5
+                    })
+                });
+
+                const data = await response.json();
+
+                if (!response.ok || data.detail) {
+                    output.innerHTML =
+                        '<p style="color:#a00">' +
+                        (data.detail || "Search failed") +
+                        "</p>";
+                    return;
+                }
+
+                const hits = data.hits || [];
+
+                if (hits.length === 0) {
+                    output.innerHTML =
+                        "<p>No matching transcript segments found.</p>";
+                    return;
+                }
+
+                output.innerHTML = hits.map((hit, index) => {
+                    const start = Math.floor(hit.start_s || 0);
+                    const end = Math.floor(hit.end_s || 0);
+
+                    const startMinutes = String(
+                        Math.floor(start / 60)
+                    ).padStart(2, "0");
+
+                    const startSeconds = String(
+                        start % 60
+                    ).padStart(2, "0");
+
+                    const endMinutes = String(
+                        Math.floor(end / 60)
+                    ).padStart(2, "0");
+
+                    const endSeconds = String(
+                        end % 60
+                    ).padStart(2, "0");
+
+                    return `
+                        <div class="result">
+                            <div class="meta">
+                                Result ${index + 1}
+                                · ${hit.video}
+                                · ${startMinutes}:${startSeconds}
+                                - ${endMinutes}:${endSeconds}
+                                · ${hit.speaker || "Unknown"}
+                                · score ${hit.score ?? "-"}
+                            </div>
+
+                            <div>${hit.text}</div>
+                        </div>
+                    `;
+                }).join("");
+
+            } catch (error) {
+                output.innerHTML =
+                    '<p style="color:#a00">' +
+                    error.message +
+                    "</p>";
+            }
+        };
+    </script>
+</body>
+</html>
+"""

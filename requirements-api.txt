@@ -1,0 +1,14 @@
+fastapi
+uvicorn
+python-multipart
+torch
+torchvision
+timm
+grad-cam
+albumentations
+opencv-python-headless
+numpy
+Pillow
+PyYAML
+reportlab>=4.4
+uharfbuzz>=0.40

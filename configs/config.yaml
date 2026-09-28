@@ -1,0 +1,33 @@
+project:
+  name: AgriVisionAI
+  version: 1.0
+
+dataset:
+  root: datasets/processed/plantvillage
+  image_size: 128
+  num_classes: 38
+
+training:
+  batch_size: 8
+  epochs: 10
+  learning_rate: 0.001
+  workers: 0
+  pin_memory: true
+
+model:
+  name: efficientnet_b0
+  pretrained: true
+
+checkpoint:
+  directory: checkpoints
+
+evaluation:
+  output_directory: outputs
+
+api:
+  host: 127.0.0.1
+  port: 8000
+
+logging:
+  directory: logs
+  level: INFO

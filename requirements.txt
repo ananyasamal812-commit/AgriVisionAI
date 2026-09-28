@@ -1,0 +1,7 @@
+-r requirements-api.txt
+pandas
+tqdm
+scikit-learn
+matplotlib
+tensorboard
+ImageHash
